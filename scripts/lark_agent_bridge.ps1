@@ -5,6 +5,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
 $systemContext = @"
 You are replying to a Feishu/Lark user message through a local bridge.
@@ -158,6 +160,48 @@ function Get-EventMessage {
   }
 }
 
+function Get-EventMessageFromCompactLine {
+  param([string]$Line)
+
+  $messageId = ""
+  $content = ""
+  $chatType = ""
+  $senderType = ""
+  $messageType = ""
+
+  if ($Line -match '"message_id":"([^"]+)"') {
+    $messageId = $Matches[1]
+  }
+  elseif ($Line -match '"id":"([^"]+)"') {
+    $messageId = $Matches[1]
+  }
+
+  if ($Line -match '"content":"(.*?)","create_time"') {
+    $content = $Matches[1]
+  }
+  elseif ($Line -match '"text":"(.*?)"') {
+    $content = $Matches[1]
+  }
+
+  if ($Line -match '"chat_type":"([^"]+)"') {
+    $chatType = $Matches[1]
+  }
+  if ($Line -match '"sender_type":"([^"]+)"') {
+    $senderType = $Matches[1]
+  }
+  if ($Line -match '"message_type":"([^"]+)"') {
+    $messageType = $Matches[1]
+  }
+
+  [pscustomobject]@{
+    MessageId = $messageId
+    Text = (Convert-MessageText -Raw $content)
+    ChatType = $chatType
+    SenderType = $senderType
+    MessageType = $messageType
+  }
+}
+
 function Test-ShouldHandleMessage {
   param([object]$Message)
 
@@ -206,7 +250,8 @@ function Invoke-CodexAgent {
   $prompt = "$systemContext`n`nUser message:`n$UserText"
   $psi = [System.Diagnostics.ProcessStartInfo]::new()
   $psi.FileName = "codex"
-  $psi.Arguments = "exec -"
+  $psi.Arguments = "exec --skip-git-repo-check -"
+  $psi.WorkingDirectory = [Environment]::GetFolderPath("UserProfile")
   $psi.RedirectStandardInput = $true
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
@@ -255,7 +300,7 @@ Write-Info "Starting local Feishu/Lark bridge with agent: $Agent"
 Write-Info "Only text events from im.message.receive_v1 are handled. Press Ctrl+C to stop."
 
 $powerShellExe = if (Get-Command "pwsh" -ErrorAction SilentlyContinue) { "pwsh" } else { "powershell" }
-$subscriberCommand = "lark-cli event +subscribe --event-types im.message.receive_v1 --compact --quiet"
+$subscriberCommand = "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(`$false); `$OutputEncoding = [System.Text.UTF8Encoding]::new(`$false); lark-cli event +subscribe --event-types im.message.receive_v1 --compact --quiet"
 $subscriber = [System.Diagnostics.ProcessStartInfo]::new()
 $subscriber.FileName = $powerShellExe
 $escapedSubscriberCommand = $subscriberCommand.Replace('"', '\"')
@@ -278,8 +323,14 @@ while (-not $eventProcess.HasExited) {
   }
 
   try {
-    $event = $line | ConvertFrom-Json
-    $message = Get-EventMessage -Event $event
+    try {
+      $event = $line | ConvertFrom-Json
+      $message = Get-EventMessage -Event $event
+    }
+    catch {
+      Write-BridgeError "Could not parse compact JSON; falling back to tolerant parser. $($_.Exception.Message)"
+      $message = Get-EventMessageFromCompactLine -Line $line
+    }
 
     if (-not (Test-ShouldHandleMessage -Message $message)) {
       continue

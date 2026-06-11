@@ -15,7 +15,9 @@ Preferred npm-style command:
 npx github:panjinggee-bit/codex-lark-bot
 ```
 
-After setup, start the local bridge with:
+This command is the one-step path: choose one local agent, connect or reuse a Feishu/Lark app/bot through the official QR/browser flow when needed, then start the local bridge.
+
+To start only the local bridge later:
 
 ```powershell
 npx github:panjinggee-bit/codex-lark-bot bridge
@@ -37,7 +39,7 @@ The installer clones or updates this skill into `~/.codex/skills/codex-lark-bot`
 
 - Which single local agent to connect: Claude Code or Codex CLI.
 - It then calls the official `lark-cli config init --new` flow. That Feishu/Lark flow can let the user scan/confirm login and choose an existing app/bot or create a new one.
-- After setup, it asks whether to start the local bridge. The bridge must keep running for Feishu/Lark messages to reach local Claude Code or Codex CLI.
+- After setup, it starts the local bridge immediately. The bridge must keep running for Feishu/Lark messages to reach local Claude Code or Codex CLI.
 
 To connect both Claude Code and Codex CLI cleanly, run the wizard twice and bind each agent to its own Feishu/Lark bot/app. A single bridge process has exactly one answering agent.
 
@@ -135,7 +137,7 @@ powershell -ExecutionPolicy Bypass -File C:\Users\KC\.codex\skills\codex-lark-bo
 
 The script never accepts `app_secret` as a command-line argument. For `existing-app`, it prompts securely and passes the secret through stdin.
 
-`-InstallIfMissing` installs `@larksuite/cli` with npm if `lark-cli` is absent. `-Agent claude` also runs `npx skills add larksuite/cli -g -y` so Claude Code receives the official Lark skills. `-Mode bridge` starts a long-running local listener; keep its terminal open. The interactive wizard intentionally binds one bot/app to one answering agent; use separate runs for Claude Code and Codex CLI.
+`-InstallIfMissing` installs `@larksuite/cli` with npm if `lark-cli` is absent. `-Agent claude` also runs `npx skills add larksuite/cli -g -y` so Claude Code receives the official Lark skills. `-Mode interactive` now performs setup and starts the bridge in one run. `-Mode bridge` starts a long-running local listener and also bootstraps Feishu/Lark config if no app is configured; keep its terminal open. The interactive wizard intentionally binds one bot/app to one answering agent; use separate runs for Claude Code and Codex CLI.
 
 ## Local Bridge
 
@@ -150,7 +152,7 @@ Bridge behavior:
 - Subscribes to `im.message.receive_v1` with `lark-cli event +subscribe --compact --quiet`.
 - Handles text messages delivered to the bot and ignores empty, non-text, duplicate, and bot-sender messages.
 - Invokes Claude Code with `claude --print --permission-mode plan`.
-- Invokes Codex CLI with `codex exec -`.
+- Invokes Codex CLI with `codex exec --skip-git-repo-check -` from the user's home directory.
 - Replies through `lark-cli im +messages-reply --as bot`.
 - Keeps a small in-memory de-duplication cache for recent `message_id` values.
 

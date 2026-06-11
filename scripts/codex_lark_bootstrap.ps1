@@ -244,6 +244,30 @@ function Run-DoctorSummary {
   Write-Warning "Connection is not fully healthy yet. Review the doctor output above, then rerun this script with -Mode doctor."
 }
 
+function Test-LarkConfigReady {
+  $raw = & lark-cli doctor --offline 2>&1
+  try {
+    $text = ($raw | Out-String)
+    $json = $text | ConvertFrom-Json
+    $app = $json.checks | Where-Object { $_.name -eq "app_resolved" } | Select-Object -First 1
+    return ($app -and $app.status -eq "pass")
+  }
+  catch {
+    return $false
+  }
+}
+
+function Ensure-LarkConnection {
+  if (Test-LarkConfigReady) {
+    Write-Success "Found existing Feishu/Lark app configuration."
+    return
+  }
+
+  Run-Step "Connect Feishu/Lark app/bot" {
+    Create-NewApp
+  }
+}
+
 function Start-LocalBridge {
   $bridgeAgent = Resolve-BridgeAgent
   $bridgeScript = Join-Path $PSScriptRoot "lark_agent_bridge.ps1"
@@ -283,21 +307,22 @@ switch ($Mode) {
       Ensure-ClaudeLarkSkills
     }
 
-    Run-Step "Connect Feishu/Lark app/bot" {
-      Create-NewApp
-    }
+    Ensure-LarkConnection
 
     Run-Step "Verify connection" {
       Run-DoctorSummary
     }
 
-    if (Read-YesNo -Prompt "Start local bridge now?" -DefaultYes $true) {
-      Start-LocalBridge
-    }
+    Start-LocalBridge
   }
 
   "bridge" {
+    if ($Agent -eq "both") {
+      $script:Agent = Resolve-AgentInteractively
+    }
+    $script:InstallIfMissing = $true
     Ensure-AgentTools
+    Ensure-LarkConnection
     Start-LocalBridge
   }
 
