@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Lark Bot"
+  short_description: "Connect Codex or Claude Code to Feishu/Lark and provision bot setup."
+  default_prompt: "Connect my local Codex CLI or Claude Code to Feishu/Lark and create or configure a bot for automation."
