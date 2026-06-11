@@ -124,6 +124,54 @@ function runCapture(command, args, options = {}) {
   return (result.stdout || "").trim();
 }
 
+function quotePowerShell(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function runLarkCliCapture(args, options = {}) {
+  if (process.platform !== "win32") {
+    return runCapture("lark-cli", args, options);
+  }
+
+  const command = ["lark-cli", ...args.map(quotePowerShell)].join(" ");
+  return runCapture("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    command,
+  ], options);
+}
+
+function spawnLarkCliSubscribe() {
+  const args = [
+    "event",
+    "+subscribe",
+    "--event-types",
+    "im.message.receive_v1",
+    "--quiet",
+  ];
+
+  if (process.platform !== "win32") {
+    return spawn("lark-cli", args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+    });
+  }
+
+  const command = ["lark-cli", ...args.map(quotePowerShell)].join(" ");
+  return spawn("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    command,
+  ], {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+  });
+}
+
 function invokeClaude(prompt) {
   return runCapture("claude", ["--print", "--permission-mode", "plan", prompt]);
 }
@@ -152,7 +200,7 @@ function invokeAgent(userText) {
 }
 
 function replyToMessage(messageId, replyText) {
-  runCapture("lark-cli", [
+  runLarkCliCapture([
     "im",
     "+messages-reply",
     "--as",
@@ -178,21 +226,17 @@ for (const command of ["lark-cli", agent]) {
 info(`Starting local Feishu/Lark bridge with agent: ${agent}`);
 info("Only text events from im.message.receive_v1 are handled. Press Ctrl+C to stop.");
 
-const subscriber = spawn("lark-cli", [
-  "event",
-  "+subscribe",
-  "--event-types",
-  "im.message.receive_v1",
-  "--quiet",
-], {
-  stdio: ["ignore", "pipe", "pipe"],
-  env: { ...process.env, PYTHONIOENCODING: "utf-8" },
-});
+const subscriber = spawnLarkCliSubscribe();
 
 subscriber.stderr.setEncoding("utf8");
 subscriber.stderr.on("data", (chunk) => {
   const text = chunk.toString().trim();
   if (text) error(text);
+});
+
+subscriber.on("error", (err) => {
+  error(`Failed to start lark-cli event subscriber: ${err.message}`);
+  process.exit(1);
 });
 
 const rl = readline.createInterface({
