@@ -54,7 +54,7 @@ The installer clones or updates this skill into `~/.codex/skills/codex-lark-bot`
 
 - Which single local agent to connect: Claude Code or Codex CLI.
 - It then calls the official `lark-cli config init --new` flow. That Feishu/Lark flow can let the user scan/confirm login and choose an existing app/bot or create a new one.
-- After setup, it starts the local bridge immediately. The bridge must keep running for Feishu/Lark messages to reach local Claude Code or Codex CLI. Use `install-service` when the user wants this to continue after closing the terminal.
+- After setup, it installs and starts the background bridge service so Feishu/Lark can continue calling the local agent after the terminal closes.
 
 To connect both Claude Code and Codex CLI cleanly, run the wizard twice and bind each agent to its own Feishu/Lark bot/app. A single bridge process has exactly one answering agent.
 
@@ -173,7 +173,8 @@ Bridge behavior:
 - Subscribes to `im.message.receive_v1` with a Node-based UTF-8 event reader around `lark-cli event +subscribe --quiet`.
 - Handles text messages delivered to the bot and ignores empty, non-text, duplicate, and bot-sender messages.
 - Invokes Claude Code with `claude --print --permission-mode plan`.
-- Invokes Codex CLI with `codex exec --skip-git-repo-check -` from the user's home directory, using a temporary UTF-8 prompt file to preserve Chinese text on Windows PowerShell.
+- Invokes Codex CLI with `codex exec --skip-git-repo-check -` from the user's home directory, writing the prompt to Codex stdin as a UTF-8 Buffer to preserve Chinese text.
+- Adds a small reaction to the user's message when processing starts if the app has reaction permissions.
 - Replies through `lark-cli im +messages-reply --as bot`.
 - Keeps a small in-memory de-duplication cache for recent `message_id` values.
 

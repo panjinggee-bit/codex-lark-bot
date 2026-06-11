@@ -177,26 +177,46 @@ function invokeClaude(prompt) {
 }
 
 function invokeCodex(prompt) {
-  const promptPath = path.join(os.tmpdir(), `codex-lark-prompt-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`);
-  fs.writeFileSync(promptPath, prompt, "utf8");
-  try {
-    const ps = process.platform === "win32" ? "powershell.exe" : "pwsh";
-    const escaped = promptPath.replace(/'/g, "''");
-    return runCapture(ps, [
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-Command",
-      `Get-Content -Raw -Encoding UTF8 -LiteralPath '${escaped}' | codex exec --skip-git-repo-check -`,
-    ], { cwd: os.homedir() });
-  } finally {
-    fs.rmSync(promptPath, { force: true });
-  }
+  return new Promise((resolve, reject) => {
+    const child = spawn("codex", ["exec", "--skip-git-repo-check", "-"], {
+      cwd: os.homedir(),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      process.stdout.write(chunk);
+    });
+
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+      process.stderr.write(chunk);
+    });
+
+    child.on("error", (err) => {
+      reject(new Error(`codex failed to start: ${err.message}`));
+    });
+
+    child.on("exit", (code) => {
+      if (code !== 0) {
+        reject(new Error(`codex failed with exit code ${code}: ${stderr}`));
+        return;
+      }
+      resolve(stdout.trim());
+    });
+
+    child.stdin.end(Buffer.from(prompt, "utf8"));
+  });
 }
 
 function invokeAgent(userText) {
   const prompt = `${systemContext}\n\nUser message:\n${userText}`;
-  return agent === "codex" ? invokeCodex(prompt) : invokeClaude(prompt);
+  return agent === "codex" ? invokeCodex(prompt) : Promise.resolve(invokeClaude(prompt));
 }
 
 function replyToMessage(messageId, replyText) {
@@ -210,6 +230,24 @@ function replyToMessage(messageId, replyText) {
     "--text",
     truncate(replyText, maxReplyChars),
   ]);
+}
+
+function addReaction(messageId, emojiType) {
+  try {
+    runLarkCliCapture([
+      "im",
+      "reactions",
+      "create",
+      "--as",
+      "bot",
+      "--params",
+      JSON.stringify({ message_id: messageId }),
+      "--data",
+      JSON.stringify({ reaction_type: { emoji_type: emojiType } }),
+    ]);
+  } catch (err) {
+    error(`Failed to add reaction ${emojiType}: ${err.message}`);
+  }
 }
 
 if (!["claude", "codex"].includes(agent)) {
@@ -246,7 +284,7 @@ const rl = readline.createInterface({
 
 info("Listening for Feishu/Lark messages...");
 
-rl.on("line", (line) => {
+rl.on("line", async (line) => {
   if (!line.trim()) return;
 
   let event;
@@ -262,10 +300,11 @@ rl.on("line", (line) => {
   if (!addSeen(message.messageId)) return;
 
   info(`Received message ${message.messageId}: ${message.text}`);
+  addReaction(message.messageId, "SMILE");
 
   let reply;
   try {
-    reply = invokeAgent(message.text) || "Agent returned an empty response.";
+    reply = (await invokeAgent(message.text)) || "Agent returned an empty response.";
   } catch (err) {
     error(err.message);
     reply = `Local ${agent} failed to answer. Check the bridge terminal for details: ${err.message}`;

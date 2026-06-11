@@ -532,7 +532,7 @@ switch ($Mode) {
       Run-DoctorSummary
     }
 
-    Start-LocalBridge
+    Install-BridgeService
   }
 
   "bridge" {
