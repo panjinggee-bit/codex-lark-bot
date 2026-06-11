@@ -24,6 +24,7 @@ Use this checklist when `lark-cli` setup is incomplete or a bot command fails.
 - Confirm the app has bot capability enabled in the Open Platform console.
 - Confirm the app is installed in the target tenant.
 - Confirm required scopes are enabled and published.
+- Confirm event subscription uses WebSocket/long connection and includes `im.message.receive_v1`.
 - Run `lark-cli auth scopes --format pretty` after changing scopes.
 - Run `lark-cli doctor` after changing app credentials or auth state.
 
@@ -33,6 +34,7 @@ Use this checklist when `lark-cli` setup is incomplete or a bot command fails.
 lark-cli contact +search-user --query "<name-or-email>" --format table
 lark-cli im +chat-create --name "Codex Bot Test" --users "<ou_xxx>" --type private --set-bot-manager --format pretty
 lark-cli im +messages-send --chat-id "<oc_xxx>" --text "Codex bot connection OK"
+powershell -ExecutionPolicy Bypass -File "$HOME\.codex\skills\codex-lark-bot\scripts\codex_lark_bootstrap.ps1" -Mode bridge -Agent claude
 ```
 
 ## Failure interpretation
@@ -42,3 +44,6 @@ lark-cli im +messages-send --chat-id "<oc_xxx>" --text "Codex bot connection OK"
 - Permission denied or missing scope: enable the reported scope in the app console, then publish or reinstall if required.
 - Bot cannot send to user: verify the user open_id, app installation, bot visibility, and whether direct messages are allowed.
 - Chat creation fails with bot identity: verify bot capability and IM chat scopes.
+- Bot is created but does not call Claude/Codex: start the local bridge and keep the terminal open.
+- Bridge receives no events: verify WebSocket event subscription, `im.message.receive_v1`, app publishing, app installation, and that the user is messaging or mentioning the bot.
+- Bridge receives events but cannot reply: verify bot message reply scopes and run `lark-cli im +messages-reply --dry-run --message-id om_test --text test`.

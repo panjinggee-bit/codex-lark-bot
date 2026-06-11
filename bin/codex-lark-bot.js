@@ -8,11 +8,12 @@ const path = require("node:path");
 const repo = "https://github.com/panjinggee-bit/codex-lark-bot.git";
 const skillRoot = path.join(os.homedir(), ".codex", "skills");
 const skillDir = path.join(skillRoot, "codex-lark-bot");
+const action = process.argv[2] || "interactive";
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     stdio: "inherit",
-    shell: process.platform === "win32",
+    shell: false,
     ...options,
   });
 
@@ -22,11 +23,16 @@ function run(command, args, options = {}) {
 }
 
 function hasCommand(command) {
-  const probe = process.platform === "win32" ? "where" : "command";
-  const args = process.platform === "win32" ? [command] : ["-v", command];
-  return spawnSync(probe, args, {
+  if (process.platform === "win32") {
+    return spawnSync("where.exe", [command], {
+      stdio: "ignore",
+      shell: false,
+    }).status === 0;
+  }
+
+  return spawnSync("sh", ["-lc", `command -v ${command}`], {
     stdio: "ignore",
-    shell: process.platform === "win32",
+    shell: false,
   }).status === 0;
 }
 
@@ -46,13 +52,21 @@ if (fs.existsSync(skillDir)) {
 }
 
 const bootstrap = path.join(skillDir, "scripts", "codex_lark_bootstrap.ps1");
+const mode = action === "bridge" ? "bridge" : "interactive";
 
-if (process.platform !== "win32") {
-  console.error("The interactive wizard currently requires PowerShell. Install PowerShell, then run:");
-  console.error(`pwsh -ExecutionPolicy Bypass -File "${bootstrap}" -Mode interactive`);
+const powershellCommand = process.platform === "win32" ? "powershell.exe" : "pwsh";
+
+if (!hasCommand(powershellCommand)) {
+  console.error("PowerShell was not found.");
+  console.error("Install PowerShell, then run:");
+  console.error(`${powershellCommand} -ExecutionPolicy Bypass -File "${bootstrap}" -Mode ${mode}`);
   process.exit(1);
 }
 
 console.log("");
-console.log("Starting Feishu/Lark agent connection wizard...");
-run("powershell", ["-ExecutionPolicy", "Bypass", "-File", bootstrap, "-Mode", "interactive"]);
+if (mode === "bridge") {
+  console.log("Starting local Feishu/Lark agent bridge...");
+} else {
+  console.log("Starting Feishu/Lark agent connection wizard...");
+}
+run(powershellCommand, ["-ExecutionPolicy", "Bypass", "-File", bootstrap, "-Mode", mode]);

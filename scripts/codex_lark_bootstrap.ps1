@@ -1,5 +1,5 @@
 param(
-  [ValidateSet("interactive", "check", "install-cli", "new-app", "existing-app", "doctor")]
+  [ValidateSet("interactive", "check", "install-cli", "new-app", "existing-app", "doctor", "bridge")]
   [string]$Mode = "interactive",
   [ValidateSet("codex", "claude", "both")]
   [string]$Agent = "both",
@@ -118,6 +118,44 @@ function Resolve-AppModeInteractively {
   }
 }
 
+function Resolve-BridgeAgent {
+  if ($Agent -eq "claude" -or $Agent -eq "codex") {
+    return $Agent
+  }
+
+  $choice = Read-MenuChoice "Which local agent should answer Feishu/Lark messages?" @(
+    "Claude Code",
+    "Codex CLI"
+  )
+
+  switch ($choice) {
+    1 { return "claude" }
+    2 { return "codex" }
+  }
+}
+
+function Read-YesNo {
+  param(
+    [string]$Prompt,
+    [bool]$DefaultYes = $true
+  )
+
+  $suffix = if ($DefaultYes) { "Y/n" } else { "y/N" }
+  while ($true) {
+    $answer = Read-Host "$Prompt [$suffix]"
+    if ([string]::IsNullOrWhiteSpace($answer)) {
+      return $DefaultYes
+    }
+    switch ($answer.Trim().ToLowerInvariant()) {
+      "y" { return $true }
+      "yes" { return $true }
+      "n" { return $false }
+      "no" { return $false }
+      default { Write-Warning "Please answer y or n." }
+    }
+  }
+}
+
 function Ensure-AgentTools {
   Run-Step "Local commands" {
     Ensure-Command "node"
@@ -220,6 +258,20 @@ function Run-DoctorSummary {
   Write-Warning "Connection is not fully healthy yet. Review the doctor output above, then rerun this script with -Mode doctor."
 }
 
+function Start-LocalBridge {
+  $bridgeAgent = Resolve-BridgeAgent
+  $bridgeScript = Join-Path $PSScriptRoot "lark_agent_bridge.ps1"
+  if (-not (Test-Path $bridgeScript)) {
+    throw "Bridge script not found: $bridgeScript"
+  }
+
+  Run-Step "Start local Feishu/Lark bridge" {
+    Write-Host "The bridge keeps this terminal open and listens for Feishu/Lark messages."
+    Write-Host "Press Ctrl+C to stop it."
+    & powershell -ExecutionPolicy Bypass -File $bridgeScript -Agent $bridgeAgent
+  }
+}
+
 function Try-Native {
   param(
     [string]$Label,
@@ -260,6 +312,15 @@ switch ($Mode) {
     Run-Step "Verify connection" {
       Run-DoctorSummary
     }
+
+    if (Read-YesNo -Prompt "Start local bridge now?" -DefaultYes $true) {
+      Start-LocalBridge
+    }
+  }
+
+  "bridge" {
+    Ensure-AgentTools
+    Start-LocalBridge
   }
 
   "install-cli" {
