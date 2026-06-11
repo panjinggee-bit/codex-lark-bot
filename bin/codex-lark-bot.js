@@ -52,7 +52,15 @@ if (fs.existsSync(skillDir)) {
 }
 
 const bootstrap = path.join(skillDir, "scripts", "codex_lark_bootstrap.ps1");
-const mode = action === "bridge" ? "bridge" : "interactive";
+const actionToMode = {
+  bridge: "bridge",
+  "install-service": "install-service",
+  "start-service": "start-service",
+  "stop-service": "stop-service",
+  "status-service": "status-service",
+  "uninstall-service": "uninstall-service",
+};
+const mode = actionToMode[action] || "interactive";
 
 const powershellCommand = process.platform === "win32" ? "powershell.exe" : "pwsh";
 
@@ -66,6 +74,8 @@ if (!hasCommand(powershellCommand)) {
 console.log("");
 if (mode === "bridge") {
   console.log("Starting local Feishu/Lark agent bridge...");
+} else if (mode.endsWith("-service")) {
+  console.log(`Managing Feishu/Lark agent bridge service: ${mode}`);
 } else {
   console.log("Starting Feishu/Lark agent connection wizard...");
 }

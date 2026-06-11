@@ -1,5 +1,5 @@
 param(
-  [ValidateSet("interactive", "check", "install-cli", "new-app", "existing-app", "doctor", "bridge")]
+  [ValidateSet("interactive", "check", "install-cli", "new-app", "existing-app", "doctor", "bridge", "install-service", "start-service", "stop-service", "status-service", "uninstall-service")]
   [string]$Mode = "interactive",
   [ValidateSet("codex", "claude", "both")]
   [string]$Agent = "both",
@@ -282,6 +282,225 @@ function Start-LocalBridge {
   }
 }
 
+function Get-ServiceTaskName {
+  param([string]$BridgeAgent)
+  return "CodexLarkBotBridge-$BridgeAgent"
+}
+
+function Get-MacServiceLabel {
+  param([string]$BridgeAgent)
+  return "com.panjinggee.codex-lark-bot.bridge.$BridgeAgent"
+}
+
+function Get-BridgeLogPath {
+  param([string]$BridgeAgent)
+  $skillRoot = Split-Path $PSScriptRoot -Parent
+  $logDir = Join-Path $skillRoot "logs"
+  if (-not (Test-Path $logDir)) {
+    New-Item -ItemType Directory -Path $logDir | Out-Null
+  }
+  return (Join-Path $logDir "bridge-$BridgeAgent.log")
+}
+
+function Test-IsWindows {
+  return (($env:OS -eq "Windows_NT") -or ($PSVersionTable.Platform -eq "Win32NT"))
+}
+
+function Test-IsMacOS {
+  return ($PSVersionTable.Platform -eq "Unix" -and (Get-Command "launchctl" -ErrorAction SilentlyContinue) -and (Test-Path "/System/Library/CoreServices/SystemVersion.plist"))
+}
+
+function ConvertTo-XmlText {
+  param([string]$Text)
+  return [System.Security.SecurityElement]::Escape($Text)
+}
+
+function Install-WindowsBridgeService {
+  param([string]$BridgeAgent)
+  Ensure-Command "Register-ScheduledTask"
+  $taskName = Get-ServiceTaskName -BridgeAgent $BridgeAgent
+  $logPath = Get-BridgeLogPath -BridgeAgent $BridgeAgent
+  $bootstrapPath = Join-Path $PSScriptRoot "codex_lark_bootstrap.ps1"
+  $escapedBootstrap = $bootstrapPath.Replace("'", "''")
+  $escapedLog = $logPath.Replace("'", "''")
+  $command = "& '$escapedBootstrap' -Mode bridge -Agent $BridgeAgent *> '$escapedLog'"
+  $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command `"$command`""
+
+  $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arguments
+  $trigger = New-ScheduledTaskTrigger -AtLogOn
+  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
+  Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Description "Runs codex-lark-bot local bridge for $BridgeAgent at user logon." -Force | Out-Null
+  Start-ScheduledTask -TaskName $taskName
+  Write-Success "Background bridge service installed and started: $taskName"
+  Write-Host "Log file: $logPath"
+}
+
+function Install-MacBridgeService {
+  param([string]$BridgeAgent)
+  Ensure-Command "launchctl"
+  Ensure-Command "pwsh"
+
+  $label = Get-MacServiceLabel -BridgeAgent $BridgeAgent
+  $launchAgentsDir = Join-Path $HOME "Library/LaunchAgents"
+  if (-not (Test-Path $launchAgentsDir)) {
+    New-Item -ItemType Directory -Path $launchAgentsDir | Out-Null
+  }
+
+  $plistPath = Join-Path $launchAgentsDir "$label.plist"
+  $logPath = Get-BridgeLogPath -BridgeAgent $BridgeAgent
+  $bootstrapPath = Join-Path $PSScriptRoot "codex_lark_bootstrap.ps1"
+  $domain = "gui/$(id -u)"
+
+  $plist = @"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$(ConvertTo-XmlText $label)</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string>
+    <string>pwsh</string>
+    <string>-NoProfile</string>
+    <string>-ExecutionPolicy</string>
+    <string>Bypass</string>
+    <string>-File</string>
+    <string>$(ConvertTo-XmlText $bootstrapPath)</string>
+    <string>-Mode</string>
+    <string>bridge</string>
+    <string>-Agent</string>
+    <string>$(ConvertTo-XmlText $BridgeAgent)</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>$(ConvertTo-XmlText $logPath)</string>
+  <key>StandardErrorPath</key>
+  <string>$(ConvertTo-XmlText $logPath)</string>
+  <key>WorkingDirectory</key>
+  <string>$(ConvertTo-XmlText $HOME)</string>
+</dict>
+</plist>
+"@
+
+  [System.IO.File]::WriteAllText($plistPath, $plist, [System.Text.UTF8Encoding]::new($false))
+  & launchctl bootout $domain $plistPath 2>$null
+  & launchctl bootstrap $domain $plistPath
+  if ($LASTEXITCODE -ne 0) {
+    throw "launchctl bootstrap failed for $plistPath"
+  }
+  & launchctl kickstart -k "$domain/$label"
+  Write-Success "Background bridge LaunchAgent installed and started: $label"
+  Write-Host "Plist: $plistPath"
+  Write-Host "Log file: $logPath"
+}
+
+function Install-BridgeService {
+  $bridgeAgent = Resolve-BridgeAgent
+  $script:Agent = $bridgeAgent
+  $script:InstallIfMissing = $true
+  Ensure-AgentTools
+  Ensure-LarkConnection
+
+  Run-Step "Install background bridge service" {
+    if (Test-IsWindows) {
+      Install-WindowsBridgeService -BridgeAgent $bridgeAgent
+    }
+    elseif (Test-IsMacOS) {
+      Install-MacBridgeService -BridgeAgent $bridgeAgent
+    }
+    else {
+      throw "Background service install currently supports Windows and macOS only."
+    }
+  }
+}
+
+function Start-BridgeService {
+  $bridgeAgent = Resolve-BridgeAgent
+  Run-Step "Start background bridge service" {
+    if (Test-IsWindows) {
+      Start-ScheduledTask -TaskName (Get-ServiceTaskName -BridgeAgent $bridgeAgent)
+    }
+    elseif (Test-IsMacOS) {
+      $label = Get-MacServiceLabel -BridgeAgent $bridgeAgent
+      $plistPath = Join-Path (Join-Path $HOME "Library/LaunchAgents") "$label.plist"
+      & launchctl bootstrap "gui/$(id -u)" $plistPath 2>$null
+      & launchctl kickstart -k "gui/$(id -u)/$label"
+    }
+    else {
+      throw "Background service management currently supports Windows and macOS only."
+    }
+    Write-Success "Started background bridge service for $bridgeAgent"
+  }
+}
+
+function Stop-BridgeService {
+  $bridgeAgent = Resolve-BridgeAgent
+  Run-Step "Stop background bridge service" {
+    if (Test-IsWindows) {
+      Stop-ScheduledTask -TaskName (Get-ServiceTaskName -BridgeAgent $bridgeAgent)
+    }
+    elseif (Test-IsMacOS) {
+      $label = Get-MacServiceLabel -BridgeAgent $bridgeAgent
+      $plistPath = Join-Path (Join-Path $HOME "Library/LaunchAgents") "$label.plist"
+      & launchctl bootout "gui/$(id -u)" $plistPath
+    }
+    else {
+      throw "Background service management currently supports Windows and macOS only."
+    }
+    Write-Success "Stopped background bridge service for $bridgeAgent"
+  }
+}
+
+function Show-BridgeServiceStatus {
+  $bridgeAgent = Resolve-BridgeAgent
+  Run-Step "Background bridge service status" {
+    if (Test-IsWindows) {
+      $taskName = Get-ServiceTaskName -BridgeAgent $bridgeAgent
+      $task = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
+      $info = Get-ScheduledTaskInfo -TaskName $taskName
+      Write-Host "Task: $taskName"
+      Write-Host "State: $($task.State)"
+      Write-Host "Last run: $($info.LastRunTime)"
+      Write-Host "Last result: $($info.LastTaskResult)"
+      Write-Host "Next run: $($info.NextRunTime)"
+    }
+    elseif (Test-IsMacOS) {
+      $label = Get-MacServiceLabel -BridgeAgent $bridgeAgent
+      Write-Host "LaunchAgent: $label"
+      & launchctl print "gui/$(id -u)/$label"
+    }
+    else {
+      throw "Background service management currently supports Windows and macOS only."
+    }
+    Write-Host "Log file: $(Get-BridgeLogPath -BridgeAgent $bridgeAgent)"
+  }
+}
+
+function Uninstall-BridgeService {
+  $bridgeAgent = Resolve-BridgeAgent
+  Run-Step "Uninstall background bridge service" {
+    if (Test-IsWindows) {
+      $taskName = Get-ServiceTaskName -BridgeAgent $bridgeAgent
+      Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+      Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+    }
+    elseif (Test-IsMacOS) {
+      $label = Get-MacServiceLabel -BridgeAgent $bridgeAgent
+      $plistPath = Join-Path (Join-Path $HOME "Library/LaunchAgents") "$label.plist"
+      & launchctl bootout "gui/$(id -u)" $plistPath 2>$null
+      Remove-Item -LiteralPath $plistPath -ErrorAction SilentlyContinue
+    }
+    else {
+      throw "Background service management currently supports Windows and macOS only."
+    }
+    Write-Success "Uninstalled background bridge service for $bridgeAgent"
+  }
+}
+
 function Try-Native {
   param(
     [string]$Label,
@@ -335,6 +554,26 @@ switch ($Mode) {
     Run-Step "Install Claude Code Lark skills when requested" {
       Ensure-ClaudeLarkSkills
     }
+  }
+
+  "install-service" {
+    Install-BridgeService
+  }
+
+  "start-service" {
+    Start-BridgeService
+  }
+
+  "stop-service" {
+    Stop-BridgeService
+  }
+
+  "status-service" {
+    Show-BridgeServiceStatus
+  }
+
+  "uninstall-service" {
+    Uninstall-BridgeService
   }
 
   "check" {

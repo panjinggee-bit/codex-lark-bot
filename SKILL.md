@@ -23,6 +23,21 @@ To start only the local bridge later:
 npx github:panjinggee-bit/codex-lark-bot bridge
 ```
 
+To keep the bridge running after the terminal closes, install it as a Windows background task:
+
+```powershell
+npx github:panjinggee-bit/codex-lark-bot install-service
+```
+
+Manage it later with:
+
+```powershell
+npx github:panjinggee-bit/codex-lark-bot status-service
+npx github:panjinggee-bit/codex-lark-bot stop-service
+npx github:panjinggee-bit/codex-lark-bot start-service
+npx github:panjinggee-bit/codex-lark-bot uninstall-service
+```
+
 After publishing this package to npm, the command becomes:
 
 ```powershell
@@ -39,7 +54,7 @@ The installer clones or updates this skill into `~/.codex/skills/codex-lark-bot`
 
 - Which single local agent to connect: Claude Code or Codex CLI.
 - It then calls the official `lark-cli config init --new` flow. That Feishu/Lark flow can let the user scan/confirm login and choose an existing app/bot or create a new one.
-- After setup, it starts the local bridge immediately. The bridge must keep running for Feishu/Lark messages to reach local Claude Code or Codex CLI.
+- After setup, it starts the local bridge immediately. The bridge must keep running for Feishu/Lark messages to reach local Claude Code or Codex CLI. Use `install-service` when the user wants this to continue after closing the terminal.
 
 To connect both Claude Code and Codex CLI cleanly, run the wizard twice and bind each agent to its own Feishu/Lark bot/app. A single bridge process has exactly one answering agent.
 
@@ -116,23 +131,29 @@ To connect both Claude Code and Codex CLI cleanly, run the wizard twice and bind
 8. Start the local bridge when the user wants Feishu/Lark messages to trigger a local agent:
 
    ```powershell
-   powershell -ExecutionPolicy Bypass -File C:\Users\KC\.codex\skills\codex-lark-bot\scripts\codex_lark_bootstrap.ps1 -Mode bridge -Agent claude
+   npx github:panjinggee-bit/codex-lark-bot bridge
    ```
 
    The bridge listens to `im.message.receive_v1`, handles text messages delivered to the bot, calls the selected local agent, and replies with `lark-cli im +messages-reply`.
 
 ## Scripted Bootstrap
 
-Use `scripts/codex_lark_bootstrap.ps1` for repeatable local setup and diagnostics:
+Prefer the npm-style commands for repeatable setup and diagnostics:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File C:\Users\KC\.codex\skills\codex-lark-bot\scripts\codex_lark_bootstrap.ps1 -Mode interactive
-powershell -ExecutionPolicy Bypass -File C:\Users\KC\.codex\skills\codex-lark-bot\scripts\codex_lark_bootstrap.ps1 -Mode check -Agent both
-powershell -ExecutionPolicy Bypass -File C:\Users\KC\.codex\skills\codex-lark-bot\scripts\codex_lark_bootstrap.ps1 -Mode install-cli -Agent both
-powershell -ExecutionPolicy Bypass -File C:\Users\KC\.codex\skills\codex-lark-bot\scripts\codex_lark_bootstrap.ps1 -Mode new-app -Agent both -InstallIfMissing
-powershell -ExecutionPolicy Bypass -File C:\Users\KC\.codex\skills\codex-lark-bot\scripts\codex_lark_bootstrap.ps1 -Mode existing-app -AppId <app_id> -Brand feishu -Agent claude -InstallIfMissing
-powershell -ExecutionPolicy Bypass -File C:\Users\KC\.codex\skills\codex-lark-bot\scripts\codex_lark_bootstrap.ps1 -Mode doctor -Agent both
-powershell -ExecutionPolicy Bypass -File C:\Users\KC\.codex\skills\codex-lark-bot\scripts\codex_lark_bootstrap.ps1 -Mode bridge -Agent claude
+npx github:panjinggee-bit/codex-lark-bot
+npx github:panjinggee-bit/codex-lark-bot bridge
+npx github:panjinggee-bit/codex-lark-bot install-service
+npx github:panjinggee-bit/codex-lark-bot status-service
+npx github:panjinggee-bit/codex-lark-bot stop-service
+npx github:panjinggee-bit/codex-lark-bot start-service
+npx github:panjinggee-bit/codex-lark-bot uninstall-service
+```
+
+If calling the local script directly is necessary, resolve it from the user's home directory instead of hardcoding a machine-specific path:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "$HOME\.codex\skills\codex-lark-bot\scripts\codex_lark_bootstrap.ps1" -Mode bridge -Agent claude
 ```
 
 The script never accepts `app_secret` as a command-line argument. For `existing-app`, it prompts securely and passes the secret through stdin.
@@ -157,6 +178,18 @@ Bridge behavior:
 - Keeps a small in-memory de-duplication cache for recent `message_id` values.
 
 The local machine must stay online while the bridge is running. If Feishu/Lark does not deliver messages, verify the app has bot capability, event subscription includes `im.message.receive_v1`, WebSocket event receiving is enabled, the app is published/installed, and the bridge terminal is still running.
+
+## Background Service
+
+Install a background service when the bridge should survive terminal close:
+
+```powershell
+npx github:panjinggee-bit/codex-lark-bot install-service
+```
+
+On Windows this creates a Task Scheduler task that runs at user logon. On macOS this creates a LaunchAgent in `~/Library/LaunchAgents`. The service starts immediately after installation and writes logs under `~/.codex/skills/codex-lark-bot/logs/bridge-<agent>.log`.
+
+Use `status-service`, `stop-service`, `start-service`, and `uninstall-service` to manage it. The computer and user session still need to be online; this is a local background bridge, not a cloud-hosted bot.
 
 ## Permission Guidance
 
