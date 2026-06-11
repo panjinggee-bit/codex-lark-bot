@@ -302,6 +302,16 @@ function Get-BridgeLogPath {
   return (Join-Path $logDir "bridge-$BridgeAgent.log")
 }
 
+function Get-WindowsLauncherPath {
+  param([string]$BridgeAgent)
+  $skillRoot = Split-Path $PSScriptRoot -Parent
+  $runDir = Join-Path $skillRoot "run"
+  if (-not (Test-Path $runDir)) {
+    New-Item -ItemType Directory -Path $runDir | Out-Null
+  }
+  return (Join-Path $runDir "bridge-$BridgeAgent.cmd")
+}
+
 function Test-IsWindows {
   return (($env:OS -eq "Windows_NT") -or ($PSVersionTable.Platform -eq "Win32NT"))
 }
@@ -321,17 +331,21 @@ function Install-WindowsBridgeService {
   $taskName = Get-ServiceTaskName -BridgeAgent $BridgeAgent
   $logPath = Get-BridgeLogPath -BridgeAgent $BridgeAgent
   $bootstrapPath = Join-Path $PSScriptRoot "codex_lark_bootstrap.ps1"
-  $escapedBootstrap = $bootstrapPath.Replace("'", "''")
-  $escapedLog = $logPath.Replace("'", "''")
-  $command = "& '$escapedBootstrap' -Mode bridge -Agent $BridgeAgent *> '$escapedLog'"
-  $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command `"$command`""
+  $launcherPath = Get-WindowsLauncherPath -BridgeAgent $BridgeAgent
+  $launcher = @"
+@echo off
+set "PATH=$env:PATH"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$bootstrapPath" -Mode bridge -Agent $BridgeAgent >> "$logPath" 2>&1
+"@
+  [System.IO.File]::WriteAllText($launcherPath, $launcher, [System.Text.UTF8Encoding]::new($false))
 
-  $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arguments
+  $action = New-ScheduledTaskAction -Execute $launcherPath
   $trigger = New-ScheduledTaskTrigger -AtLogOn
   $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
   Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Description "Runs codex-lark-bot local bridge for $BridgeAgent at user logon." -Force | Out-Null
   Start-ScheduledTask -TaskName $taskName
   Write-Success "Background bridge service installed and started: $taskName"
+  Write-Host "Launcher: $launcherPath"
   Write-Host "Log file: $logPath"
 }
 
@@ -350,6 +364,7 @@ function Install-MacBridgeService {
   $logPath = Get-BridgeLogPath -BridgeAgent $BridgeAgent
   $bootstrapPath = Join-Path $PSScriptRoot "codex_lark_bootstrap.ps1"
   $domain = "gui/$(id -u)"
+  $envPath = if ($env:PATH) { $env:PATH } else { "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" }
 
   $plist = @"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -382,6 +397,11 @@ function Install-MacBridgeService {
   <string>$(ConvertTo-XmlText $logPath)</string>
   <key>WorkingDirectory</key>
   <string>$(ConvertTo-XmlText $HOME)</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>$(ConvertTo-XmlText $envPath)</string>
+  </dict>
 </dict>
 </plist>
 "@
@@ -487,6 +507,7 @@ function Uninstall-BridgeService {
       $taskName = Get-ServiceTaskName -BridgeAgent $bridgeAgent
       Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
       Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+      Remove-Item -LiteralPath (Get-WindowsLauncherPath -BridgeAgent $bridgeAgent) -ErrorAction SilentlyContinue
     }
     elseif (Test-IsMacOS) {
       $label = Get-MacServiceLabel -BridgeAgent $bridgeAgent

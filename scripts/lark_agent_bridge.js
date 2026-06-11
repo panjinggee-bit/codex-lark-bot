@@ -300,7 +300,7 @@ rl.on("line", async (line) => {
   if (!addSeen(message.messageId)) return;
 
   info(`Received message ${message.messageId}: ${message.text}`);
-  addReaction(message.messageId, "SMILE");
+  addReaction(message.messageId, "Typing");
 
   let reply;
   try {
