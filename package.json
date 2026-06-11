@@ -1,6 +1,6 @@
 {
   "name": "codex-lark-bot",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "One-command installer and local bridge for connecting Codex CLI or Claude Code to Feishu/Lark bots.",
   "bin": {
     "codex-lark-bot": "bin/codex-lark-bot.js"

@@ -152,7 +152,7 @@ Bridge behavior:
 - Subscribes to `im.message.receive_v1` with `lark-cli event +subscribe --compact --quiet`.
 - Handles text messages delivered to the bot and ignores empty, non-text, duplicate, and bot-sender messages.
 - Invokes Claude Code with `claude --print --permission-mode plan`.
-- Invokes Codex CLI with `codex exec --skip-git-repo-check -` from the user's home directory.
+- Invokes Codex CLI with `codex exec --skip-git-repo-check -` from the user's home directory, using a temporary UTF-8 prompt file to preserve Chinese text on Windows PowerShell.
 - Replies through `lark-cli im +messages-reply --as bot`.
 - Keeps a small in-memory de-duplication cache for recent `message_id` values.
 

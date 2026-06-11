@@ -248,27 +248,34 @@ function Invoke-CodexAgent {
   param([string]$UserText)
 
   $prompt = "$systemContext`n`nUser message:`n$UserText"
+  $promptPath = Join-Path ([System.IO.Path]::GetTempPath()) ("codex-lark-prompt-" + [guid]::NewGuid().ToString("N") + ".txt")
+  [System.IO.File]::WriteAllText($promptPath, $prompt, [System.Text.UTF8Encoding]::new($false))
+
   $psi = [System.Diagnostics.ProcessStartInfo]::new()
-  $psi.FileName = "codex"
-  $psi.Arguments = "exec --skip-git-repo-check -"
+  $powerShellExe = if (Get-Command "pwsh" -ErrorAction SilentlyContinue) { "pwsh" } else { "powershell" }
+  $escapedPromptPath = $promptPath.Replace("'", "''")
+  $psi.FileName = $powerShellExe
+  $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -Command `"Get-Content -Raw -Encoding UTF8 -LiteralPath '$escapedPromptPath' | codex exec --skip-git-repo-check -`""
   $psi.WorkingDirectory = [Environment]::GetFolderPath("UserProfile")
-  $psi.RedirectStandardInput = $true
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
   $psi.UseShellExecute = $false
 
-  $process = [System.Diagnostics.Process]::Start($psi)
-  $process.StandardInput.Write($prompt)
-  $process.StandardInput.Close()
-  $stdout = $process.StandardOutput.ReadToEnd()
-  $stderr = $process.StandardError.ReadToEnd()
-  $process.WaitForExit()
+  try {
+    $process = [System.Diagnostics.Process]::Start($psi)
+    $stdout = $process.StandardOutput.ReadToEnd()
+    $stderr = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
 
-  if ($process.ExitCode -ne 0) {
-    throw "codex failed with exit code $($process.ExitCode): $stderr"
+    if ($process.ExitCode -ne 0) {
+      throw "codex failed with exit code $($process.ExitCode): $stderr"
+    }
+
+    return $stdout.Trim()
   }
-
-  return $stdout.Trim()
+  finally {
+    Remove-Item -LiteralPath $promptPath -ErrorAction SilentlyContinue
+  }
 }
 
 function Invoke-Agent {
