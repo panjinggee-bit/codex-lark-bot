@@ -312,6 +312,41 @@ function Get-WindowsLauncherPath {
   return (Join-Path $runDir "bridge-$BridgeAgent.cmd")
 }
 
+function Get-WindowsRunValueName {
+  param([string]$BridgeAgent)
+  return "CodexLarkBotBridge-$BridgeAgent"
+}
+
+function Get-WindowsRunKeyPath {
+  return "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+}
+
+function Get-WindowsBridgeProcesses {
+  param([string]$BridgeAgent)
+  $agentNeedle = "-Agent $BridgeAgent"
+  Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.CommandLine -and
+      $_.CommandLine -like "*codex_lark_bootstrap.ps1*" -and
+      $_.CommandLine -like "*-Mode bridge*" -and
+      $_.CommandLine -like "*$agentNeedle*"
+    }
+}
+
+function Stop-WindowsBridgeProcesses {
+  param([string]$BridgeAgent)
+  $processes = @(Get-WindowsBridgeProcesses -BridgeAgent $BridgeAgent)
+  foreach ($process in $processes) {
+    try {
+      Invoke-CimMethod -InputObject $process -MethodName Terminate | Out-Null
+      Write-Host "Stopped bridge process: $($process.ProcessId)"
+    }
+    catch {
+      Write-Warning "Could not stop bridge process $($process.ProcessId): $($_.Exception.Message)"
+    }
+  }
+}
+
 function Test-IsWindows {
   return (($env:OS -eq "Windows_NT") -or ($PSVersionTable.Platform -eq "Win32NT"))
 }
@@ -342,11 +377,40 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$bootstrapPath" -Mode b
   $action = New-ScheduledTaskAction -Execute $launcherPath
   $trigger = New-ScheduledTaskTrigger -AtLogOn
   $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
-  Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Description "Runs codex-lark-bot local bridge for $BridgeAgent at user logon." -Force | Out-Null
-  Start-ScheduledTask -TaskName $taskName
-  Write-Success "Background bridge service installed and started: $taskName"
-  Write-Host "Launcher: $launcherPath"
-  Write-Host "Log file: $logPath"
+
+  try {
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Description "Runs codex-lark-bot local bridge for $BridgeAgent at user logon." -Force | Out-Null
+    Start-ScheduledTask -TaskName $taskName
+    Write-Success "Background bridge service installed and started: $taskName"
+    Write-Host "Launcher: $launcherPath"
+    Write-Host "Log file: $logPath"
+  }
+  catch {
+    Write-Warning "Task Scheduler registration failed: $($_.Exception.Message)"
+    Write-Warning "Falling back to the current user's Windows startup registry. This does not require administrator permission."
+    Install-WindowsRunBridgeService -BridgeAgent $BridgeAgent -LauncherPath $launcherPath -LogPath $logPath
+  }
+}
+
+function Install-WindowsRunBridgeService {
+  param(
+    [string]$BridgeAgent,
+    [string]$LauncherPath,
+    [string]$LogPath
+  )
+
+  $runKey = Get-WindowsRunKeyPath
+  $valueName = Get-WindowsRunValueName -BridgeAgent $BridgeAgent
+  if (-not (Test-Path $runKey)) {
+    New-Item -Path $runKey -Force | Out-Null
+  }
+
+  Set-ItemProperty -Path $runKey -Name $valueName -Value "`"$LauncherPath`""
+  Start-Process -FilePath $LauncherPath -WindowStyle Hidden
+  Write-Success "Background bridge startup entry installed and started: $valueName"
+  Write-Host "Startup entry: $runKey\$valueName"
+  Write-Host "Launcher: $LauncherPath"
+  Write-Host "Log file: $LogPath"
 }
 
 function Install-MacBridgeService {
@@ -442,7 +506,19 @@ function Start-BridgeService {
   $bridgeAgent = Resolve-BridgeAgent
   Run-Step "Start background bridge service" {
     if (Test-IsWindows) {
-      Start-ScheduledTask -TaskName (Get-ServiceTaskName -BridgeAgent $bridgeAgent)
+      $taskName = Get-ServiceTaskName -BridgeAgent $bridgeAgent
+      $launcherPath = Get-WindowsLauncherPath -BridgeAgent $bridgeAgent
+      $runValueName = Get-WindowsRunValueName -BridgeAgent $bridgeAgent
+      $runEntry = Get-ItemProperty -Path (Get-WindowsRunKeyPath) -Name $runValueName -ErrorAction SilentlyContinue
+      if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+        Start-ScheduledTask -TaskName $taskName
+      }
+      elseif ($runEntry -and (Test-Path $launcherPath)) {
+        Start-Process -FilePath $launcherPath -WindowStyle Hidden
+      }
+      else {
+        throw "No Windows background bridge service found for $bridgeAgent. Run install-service first."
+      }
     }
     elseif (Test-IsMacOS) {
       $label = Get-MacServiceLabel -BridgeAgent $bridgeAgent
@@ -461,7 +537,11 @@ function Stop-BridgeService {
   $bridgeAgent = Resolve-BridgeAgent
   Run-Step "Stop background bridge service" {
     if (Test-IsWindows) {
-      Stop-ScheduledTask -TaskName (Get-ServiceTaskName -BridgeAgent $bridgeAgent)
+      $taskName = Get-ServiceTaskName -BridgeAgent $bridgeAgent
+      if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+        Stop-ScheduledTask -TaskName $taskName
+      }
+      Stop-WindowsBridgeProcesses -BridgeAgent $bridgeAgent
     }
     elseif (Test-IsMacOS) {
       $label = Get-MacServiceLabel -BridgeAgent $bridgeAgent
@@ -480,13 +560,35 @@ function Show-BridgeServiceStatus {
   Run-Step "Background bridge service status" {
     if (Test-IsWindows) {
       $taskName = Get-ServiceTaskName -BridgeAgent $bridgeAgent
-      $task = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
-      $info = Get-ScheduledTaskInfo -TaskName $taskName
-      Write-Host "Task: $taskName"
-      Write-Host "State: $($task.State)"
-      Write-Host "Last run: $($info.LastRunTime)"
-      Write-Host "Last result: $($info.LastTaskResult)"
-      Write-Host "Next run: $($info.NextRunTime)"
+      $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+      if ($task) {
+        $info = Get-ScheduledTaskInfo -TaskName $taskName
+        Write-Host "Mode: Task Scheduler"
+        Write-Host "Task: $taskName"
+        Write-Host "State: $($task.State)"
+        Write-Host "Last run: $($info.LastRunTime)"
+        Write-Host "Last result: $($info.LastTaskResult)"
+        Write-Host "Next run: $($info.NextRunTime)"
+      }
+      else {
+        $runValueName = Get-WindowsRunValueName -BridgeAgent $bridgeAgent
+        $runEntry = Get-ItemProperty -Path (Get-WindowsRunKeyPath) -Name $runValueName -ErrorAction SilentlyContinue
+        Write-Host "Mode: Windows current-user startup registry"
+        if ($runEntry) {
+          Write-Host "Startup entry: $runValueName"
+          Write-Host "Command: $($runEntry.$runValueName)"
+        }
+        else {
+          Write-Warning "No startup entry found for $bridgeAgent."
+        }
+      }
+      $processes = @(Get-WindowsBridgeProcesses -BridgeAgent $bridgeAgent)
+      if ($processes.Count -gt 0) {
+        Write-Host "Running process IDs: $($processes.ProcessId -join ', ')"
+      }
+      else {
+        Write-Host "Running process IDs: <none>"
+      }
     }
     elseif (Test-IsMacOS) {
       $label = Get-MacServiceLabel -BridgeAgent $bridgeAgent
@@ -506,7 +608,9 @@ function Uninstall-BridgeService {
     if (Test-IsWindows) {
       $taskName = Get-ServiceTaskName -BridgeAgent $bridgeAgent
       Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-      Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+      Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+      Stop-WindowsBridgeProcesses -BridgeAgent $bridgeAgent
+      Remove-ItemProperty -Path (Get-WindowsRunKeyPath) -Name (Get-WindowsRunValueName -BridgeAgent $bridgeAgent) -ErrorAction SilentlyContinue
       Remove-Item -LiteralPath (Get-WindowsLauncherPath -BridgeAgent $bridgeAgent) -ErrorAction SilentlyContinue
     }
     elseif (Test-IsMacOS) {

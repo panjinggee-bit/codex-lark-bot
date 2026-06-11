@@ -188,7 +188,7 @@ Install a background service when the bridge should survive terminal close:
 npx github:panjinggee-bit/codex-lark-bot install-service
 ```
 
-On Windows this creates a Task Scheduler task that runs a generated `.cmd` launcher with the current PATH captured, so npm shims such as `lark-cli`, `codex`, and `claude` still resolve after the terminal closes. On macOS this creates a LaunchAgent in `~/Library/LaunchAgents` with PATH explicitly injected. The service starts immediately after installation and writes logs under `~/.codex/skills/codex-lark-bot/logs/bridge-<agent>.log`.
+On Windows this first tries to create a Task Scheduler task that runs a generated `.cmd` launcher with the current PATH captured, so npm shims such as `lark-cli`, `codex`, and `claude` still resolve after the terminal closes. If Windows denies Task Scheduler registration, it automatically falls back to a current-user startup entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, which does not require administrator permission. On macOS this creates a LaunchAgent in `~/Library/LaunchAgents` with PATH explicitly injected. The service starts immediately after installation and writes logs under `~/.codex/skills/codex-lark-bot/logs/bridge-<agent>.log`.
 
 Use `status-service`, `stop-service`, `start-service`, and `uninstall-service` to manage it. The computer and user session still need to be online; this is a local background bridge, not a cloud-hosted bot.
 
