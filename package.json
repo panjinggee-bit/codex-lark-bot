@@ -1,0 +1,33 @@
+{
+  "name": "codex-lark-bot",
+  "version": "0.1.0",
+  "description": "One-command installer and wizard for connecting Codex CLI or Claude Code to Feishu/Lark bots.",
+  "bin": {
+    "codex-lark-bot": "bin/codex-lark-bot.js"
+  },
+  "files": [
+    "SKILL.md",
+    "agents",
+    "references",
+    "scripts",
+    "bin",
+    "install.ps1"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/panjinggee-bit/codex-lark-bot.git"
+  },
+  "keywords": [
+    "codex",
+    "claude-code",
+    "feishu",
+    "lark",
+    "bot",
+    "skill"
+  ],
+  "author": "astridpan",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}

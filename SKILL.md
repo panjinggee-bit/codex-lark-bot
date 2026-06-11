@@ -9,7 +9,19 @@ Use this skill to connect local Codex CLI and/or Claude Code to Feishu/Lark with
 
 ## One-Command Install
 
-Tell users to install and start the interactive wizard with:
+Preferred npm-style command:
+
+```powershell
+npx github:panjinggee-bit/codex-lark-bot
+```
+
+After publishing this package to npm, the command becomes:
+
+```powershell
+npx codex-lark-bot
+```
+
+Fallback raw PowerShell command:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing https://raw.githubusercontent.com/panjinggee-bit/codex-lark-bot/main/install.ps1 | iex"
