@@ -35,11 +35,11 @@ powershell -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing https://raw.gi
 
 The installer clones or updates this skill into `~/.codex/skills/codex-lark-bot`, then starts the interactive setup wizard. The wizard asks:
 
-- Which agent to connect: Claude Code, Codex CLI, or both.
-- How to connect the Feishu/Lark bot: existing app credentials or new app/bot creation.
-- For an existing app, it asks for App ID and App Secret; App Secret is hidden and passed to `lark-cli` through stdin.
-- For a new app, it calls the official `lark-cli config init --new` flow and tells the user to scan or confirm the QR/browser prompt when Feishu/Lark shows one.
+- Which single local agent to connect: Claude Code or Codex CLI.
+- It then calls the official `lark-cli config init --new` flow. That Feishu/Lark flow can let the user scan/confirm login and choose an existing app/bot or create a new one.
 - After setup, it asks whether to start the local bridge. The bridge must keep running for Feishu/Lark messages to reach local Claude Code or Codex CLI.
+
+To connect both Claude Code and Codex CLI cleanly, run the wizard twice and bind each agent to its own Feishu/Lark bot/app. A single bridge process has exactly one answering agent.
 
 ## Core Workflow
 
@@ -80,13 +80,13 @@ The installer clones or updates this skill into `~/.codex/skills/codex-lark-bot`
    $plain | lark-cli config init --brand feishu --app-id <app_id> --app-secret-stdin
    ```
 
-4. If the user wants a new bot app, prefer the official CLI bootstrap:
+4. For interactive setup, prefer the official CLI bootstrap and let the Feishu/Lark flow decide whether to reuse an existing app/bot or create a new one:
 
    ```powershell
    lark-cli config init --new --brand feishu --lang zh
    ```
 
-   This command may block while the user completes setup in the browser. Surface the verification URL or browser instructions from the command output. Treat this as semi-automated: Codex starts the app-creation flow, but the user may need to confirm in Feishu Open Platform, choose a tenant, or approve permissions.
+   This command may block while the user completes setup in the browser. Surface the verification URL or browser instructions from the command output. Treat this as semi-automated: Codex starts the app/bot connection flow, but the user may need to scan a QR code, choose an existing app, create a new app, choose a tenant, or approve permissions.
 
 5. Verify configuration and auth:
 
@@ -135,7 +135,7 @@ powershell -ExecutionPolicy Bypass -File C:\Users\KC\.codex\skills\codex-lark-bo
 
 The script never accepts `app_secret` as a command-line argument. For `existing-app`, it prompts securely and passes the secret through stdin.
 
-`-InstallIfMissing` installs `@larksuite/cli` with npm if `lark-cli` is absent. `-Agent claude` also runs `npx skills add larksuite/cli -g -y` so Claude Code receives the official Lark skills. `-Mode bridge` starts a long-running local listener; keep its terminal open.
+`-InstallIfMissing` installs `@larksuite/cli` with npm if `lark-cli` is absent. `-Agent claude` also runs `npx skills add larksuite/cli -g -y` so Claude Code receives the official Lark skills. `-Mode bridge` starts a long-running local listener; keep its terminal open. The interactive wizard intentionally binds one bot/app to one answering agent; use separate runs for Claude Code and Codex CLI.
 
 ## Local Bridge
 

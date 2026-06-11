@@ -95,26 +95,12 @@ function Read-MenuChoice {
 function Resolve-AgentInteractively {
   $choice = Read-MenuChoice "Which agent do you want to connect to Feishu/Lark?" @(
     "Claude Code",
-    "Codex CLI",
-    "Both Claude Code and Codex CLI"
+    "Codex CLI"
   )
 
   switch ($choice) {
     1 { return "claude" }
     2 { return "codex" }
-    3 { return "both" }
-  }
-}
-
-function Resolve-AppModeInteractively {
-  $choice = Read-MenuChoice "How do you want to connect the Feishu/Lark bot?" @(
-    "Use an existing app/bot and enter App ID + App Secret",
-    "Create a new app/bot through Feishu/Lark login or QR/browser flow"
-  )
-
-  switch ($choice) {
-    1 { return "existing-app" }
-    2 { return "new-app" }
   }
 }
 
@@ -234,7 +220,7 @@ function Configure-ExistingApp {
 
 function Create-NewApp {
   Write-Host "Feishu/Lark may open a browser, show a verification URL, or show a QR code."
-  Write-Host "Scan or confirm the prompt, choose the tenant, and finish the Open Platform setup."
+  Write-Host "Scan or confirm the prompt, then choose an existing app/bot or create a new one in the official Feishu/Lark flow."
   lark-cli config init --new --brand $Brand --lang zh
 }
 
@@ -289,7 +275,6 @@ function Try-Native {
 switch ($Mode) {
   "interactive" {
     $script:Agent = Resolve-AgentInteractively
-    $appMode = Resolve-AppModeInteractively
     $script:InstallIfMissing = $true
 
     Ensure-AgentTools
@@ -298,15 +283,8 @@ switch ($Mode) {
       Ensure-ClaudeLarkSkills
     }
 
-    if ($appMode -eq "existing-app") {
-      Run-Step "Configure existing Feishu/Lark app" {
-        Configure-ExistingApp
-      }
-    }
-    else {
-      Run-Step "Create new Feishu/Lark app/bot" {
-        Create-NewApp
-      }
+    Run-Step "Connect Feishu/Lark app/bot" {
+      Create-NewApp
     }
 
     Run-Step "Verify connection" {
