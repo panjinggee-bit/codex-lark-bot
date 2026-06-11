@@ -206,8 +206,7 @@ function Invoke-CodexAgent {
   $prompt = "$systemContext`n`nUser message:`n$UserText"
   $psi = [System.Diagnostics.ProcessStartInfo]::new()
   $psi.FileName = "codex"
-  [void]$psi.ArgumentList.Add("exec")
-  [void]$psi.ArgumentList.Add("-")
+  $psi.Arguments = "exec -"
   $psi.RedirectStandardInput = $true
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
@@ -259,11 +258,8 @@ $powerShellExe = if (Get-Command "pwsh" -ErrorAction SilentlyContinue) { "pwsh" 
 $subscriberCommand = "lark-cli event +subscribe --event-types im.message.receive_v1 --compact --quiet"
 $subscriber = [System.Diagnostics.ProcessStartInfo]::new()
 $subscriber.FileName = $powerShellExe
-[void]$subscriber.ArgumentList.Add("-NoProfile")
-[void]$subscriber.ArgumentList.Add("-ExecutionPolicy")
-[void]$subscriber.ArgumentList.Add("Bypass")
-[void]$subscriber.ArgumentList.Add("-Command")
-[void]$subscriber.ArgumentList.Add($subscriberCommand)
+$escapedSubscriberCommand = $subscriberCommand.Replace('"', '\"')
+$subscriber.Arguments = "-NoProfile -ExecutionPolicy Bypass -Command `"$escapedSubscriberCommand`""
 $subscriber.RedirectStandardOutput = $true
 $subscriber.RedirectStandardError = $true
 $subscriber.UseShellExecute = $false
