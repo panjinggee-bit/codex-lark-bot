@@ -302,6 +302,13 @@ function Reply-ToMessage {
 
 Find-CommandOrThrow "lark-cli" | Out-Null
 Find-CommandOrThrow $Agent | Out-Null
+Find-CommandOrThrow "node" | Out-Null
+
+$nodeBridge = Join-Path $PSScriptRoot "lark_agent_bridge.js"
+if (Test-Path $nodeBridge) {
+  & node $nodeBridge --agent $Agent --max-reply-chars $MaxReplyChars
+  exit $LASTEXITCODE
+}
 
 Write-Info "Starting local Feishu/Lark bridge with agent: $Agent"
 Write-Info "Only text events from im.message.receive_v1 are handled. Press Ctrl+C to stop."

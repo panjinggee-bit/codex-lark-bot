@@ -149,7 +149,7 @@ npx github:panjinggee-bit/codex-lark-bot bridge
 
 Bridge behavior:
 
-- Subscribes to `im.message.receive_v1` with `lark-cli event +subscribe --compact --quiet`.
+- Subscribes to `im.message.receive_v1` with a Node-based UTF-8 event reader around `lark-cli event +subscribe --quiet`.
 - Handles text messages delivered to the bot and ignores empty, non-text, duplicate, and bot-sender messages.
 - Invokes Claude Code with `claude --print --permission-mode plan`.
 - Invokes Codex CLI with `codex exec --skip-git-repo-check -` from the user's home directory, using a temporary UTF-8 prompt file to preserve Chinese text on Windows PowerShell.
