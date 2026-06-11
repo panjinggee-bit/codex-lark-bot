@@ -1,6 +1,6 @@
 param(
-  [ValidateSet("check", "install-cli", "new-app", "existing-app", "doctor")]
-  [string]$Mode = "check",
+  [ValidateSet("interactive", "check", "install-cli", "new-app", "existing-app", "doctor")]
+  [string]$Mode = "interactive",
   [ValidateSet("codex", "claude", "both")]
   [string]$Agent = "both",
   [ValidateSet("feishu", "lark")]
@@ -22,13 +22,21 @@ function Run-Step {
   & $Block
 }
 
-function Require-Command {
-  param([string]$Name)
-  $cmd = Get-Command $Name -ErrorAction SilentlyContinue
-  if (-not $cmd) {
-    throw "$Name was not found on PATH."
+function Write-Success {
+  param([string]$Message)
+  Write-Host ""
+  Write-Host "[OK] $Message" -ForegroundColor Green
+}
+
+function Mask-Value {
+  param([string]$Value)
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    return "<empty>"
   }
-  Write-Host "${Name}: $($cmd.Source)"
+  if ($Value.Length -le 8) {
+    return ("*" * $Value.Length)
+  }
+  return "$($Value.Substring(0, 4))****$($Value.Substring($Value.Length - 4))"
 }
 
 function Find-Command {
@@ -53,13 +61,75 @@ function Ensure-LarkCli {
   }
 
   if (-not $InstallIfMissing -and $Mode -ne "install-cli") {
-    throw "lark-cli was not found. Re-run with -InstallIfMissing or use -Mode install-cli."
+    throw "lark-cli was not found. Re-run with -InstallIfMissing, use -Mode install-cli, or choose automatic install in interactive mode."
   }
 
   Ensure-Command "npm"
   Write-Host "Installing @larksuite/cli globally with npm..."
   npm install -g @larksuite/cli
   Ensure-Command "lark-cli"
+}
+
+function Read-MenuChoice {
+  param(
+    [string]$Prompt,
+    [string[]]$Options
+  )
+
+  Write-Host ""
+  Write-Host $Prompt
+  for ($i = 0; $i -lt $Options.Count; $i++) {
+    Write-Host "  $($i + 1). $($Options[$i])"
+  }
+
+  while ($true) {
+    $raw = Read-Host "Enter choice"
+    $index = 0
+    if ([int]::TryParse($raw, [ref]$index) -and $index -ge 1 -and $index -le $Options.Count) {
+      return $index
+    }
+    Write-Warning "Please enter a number from 1 to $($Options.Count)."
+  }
+}
+
+function Resolve-AgentInteractively {
+  $choice = Read-MenuChoice "Which agent do you want to connect to Feishu/Lark?" @(
+    "Claude Code",
+    "Codex CLI",
+    "Both Claude Code and Codex CLI"
+  )
+
+  switch ($choice) {
+    1 { return "claude" }
+    2 { return "codex" }
+    3 { return "both" }
+  }
+}
+
+function Resolve-AppModeInteractively {
+  $choice = Read-MenuChoice "How do you want to connect the Feishu/Lark bot?" @(
+    "Use an existing app/bot and enter App ID + App Secret",
+    "Create a new app/bot through Feishu/Lark login or QR/browser flow"
+  )
+
+  switch ($choice) {
+    1 { return "existing-app" }
+    2 { return "new-app" }
+  }
+}
+
+function Ensure-AgentTools {
+  Run-Step "Local commands" {
+    Ensure-Command "node"
+    Ensure-Command "npm"
+    if ($Agent -eq "codex" -or $Agent -eq "both") {
+      Ensure-Agent "codex"
+    }
+    if ($Agent -eq "claude" -or $Agent -eq "both") {
+      Ensure-Agent "claude"
+    }
+    Ensure-LarkCli
+  }
 }
 
 function Ensure-Agent {
@@ -96,6 +166,60 @@ function Ensure-ClaudeLarkSkills {
   npx skills add larksuite/cli -g -y
 }
 
+function Configure-ExistingApp {
+  if ([string]::IsNullOrWhiteSpace($AppId)) {
+    $script:AppId = Read-Host "Enter Feishu/Lark App ID"
+  }
+
+  if ([string]::IsNullOrWhiteSpace($AppId)) {
+    throw "App ID is required."
+  }
+
+  Write-Host "App ID: $(Mask-Value $AppId)"
+  Write-Host "App Secret: <hidden>"
+
+  $secret = Read-Host "Enter Feishu/Lark App Secret" -AsSecureString
+  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+  try {
+    $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+    if ([string]::IsNullOrWhiteSpace($plain)) {
+      throw "App Secret is required."
+    }
+    $plain | lark-cli config init --brand $Brand --app-id $AppId --app-secret-stdin
+  }
+  finally {
+    if ($bstr -ne [IntPtr]::Zero) {
+      [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    }
+  }
+}
+
+function Create-NewApp {
+  Write-Host "Feishu/Lark may open a browser, show a verification URL, or show a QR code."
+  Write-Host "Scan or confirm the prompt, choose the tenant, and finish the Open Platform setup."
+  lark-cli config init --new --brand $Brand --lang zh
+}
+
+function Run-DoctorSummary {
+  $raw = & lark-cli doctor 2>&1
+  $raw | ForEach-Object { Write-Host $_ }
+
+  try {
+    $text = ($raw | Out-String)
+    $json = $text | ConvertFrom-Json
+    $app = $json.checks | Where-Object { $_.name -eq "app_resolved" } | Select-Object -First 1
+    if ($json.ok -or ($app -and $app.status -eq "pass")) {
+      Write-Success "Feishu/Lark bot connection succeeded. Your local agent can now use lark-cli with this bot app."
+      return
+    }
+  }
+  catch {
+    Write-Warning "Could not parse lark-cli doctor output; review the messages above."
+  }
+
+  Write-Warning "Connection is not fully healthy yet. Review the doctor output above, then rerun this script with -Mode doctor."
+}
+
 function Try-Native {
   param(
     [string]$Label,
@@ -110,20 +234,36 @@ function Try-Native {
   }
 }
 
-Run-Step "Local commands" {
-  Ensure-Command "node"
-  Ensure-Command "npm"
-  if ($Agent -eq "codex" -or $Agent -eq "both") {
-    Ensure-Agent "codex"
-  }
-  if ($Agent -eq "claude" -or $Agent -eq "both") {
-    Ensure-Agent "claude"
-  }
-  Ensure-LarkCli
-}
-
 switch ($Mode) {
+  "interactive" {
+    $script:Agent = Resolve-AgentInteractively
+    $appMode = Resolve-AppModeInteractively
+    $script:InstallIfMissing = $true
+
+    Ensure-AgentTools
+
+    Run-Step "Install Claude Code Lark skills when requested" {
+      Ensure-ClaudeLarkSkills
+    }
+
+    if ($appMode -eq "existing-app") {
+      Run-Step "Configure existing Feishu/Lark app" {
+        Configure-ExistingApp
+      }
+    }
+    else {
+      Run-Step "Create new Feishu/Lark app/bot" {
+        Create-NewApp
+      }
+    }
+
+    Run-Step "Verify connection" {
+      Run-DoctorSummary
+    }
+  }
+
   "install-cli" {
+    Ensure-AgentTools
     Run-Step "Install or verify lark-cli" {
       Ensure-LarkCli
       lark-cli --version
@@ -134,9 +274,14 @@ switch ($Mode) {
   }
 
   "check" {
+    Ensure-AgentTools
     Run-Step "Versions" {
-      Try-Native "codex --version" { codex --version }
-      Try-Native "claude --version" { claude --version }
+      if ($Agent -eq "codex" -or $Agent -eq "both") {
+        Try-Native "codex --version" { codex --version }
+      }
+      if ($Agent -eq "claude" -or $Agent -eq "both") {
+        Try-Native "claude --version" { claude --version }
+      }
       Try-Native "lark-cli --version" { lark-cli --version }
     }
     Run-Step "Offline doctor" {
@@ -145,6 +290,7 @@ switch ($Mode) {
   }
 
   "new-app" {
+    Ensure-AgentTools
     Run-Step "Install Claude Code Lark skills when requested" {
       Ensure-ClaudeLarkSkills
     }
@@ -158,22 +304,10 @@ switch ($Mode) {
   }
 
   "existing-app" {
-    if ([string]::IsNullOrWhiteSpace($AppId)) {
-      throw "-AppId is required for -Mode existing-app."
-    }
+    Ensure-AgentTools
 
     Run-Step "Configure existing app" {
-      $secret = Read-Host "App Secret" -AsSecureString
-      $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
-      try {
-        $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
-        $plain | lark-cli config init --brand $Brand --app-id $AppId --app-secret-stdin
-      }
-      finally {
-        if ($bstr -ne [IntPtr]::Zero) {
-          [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
-        }
-      }
+      Configure-ExistingApp
     }
     Run-Step "Install Claude Code Lark skills when requested" {
       Ensure-ClaudeLarkSkills
@@ -184,6 +318,7 @@ switch ($Mode) {
   }
 
   "doctor" {
+    Ensure-AgentTools
     Run-Step "Configuration" {
       lark-cli config show
     }

@@ -7,6 +7,21 @@ description: Connect local Codex CLI or Claude Code to Feishu/Lark, install lark
 
 Use this skill to connect local Codex CLI and/or Claude Code to Feishu/Lark with `lark-cli`, provision a custom app bot, and prove the bot can act through IM commands.
 
+## One-Command Install
+
+Tell users to install and start the interactive wizard with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing https://raw.githubusercontent.com/panjinggee-bit/codex-lark-bot/main/install.ps1 | iex"
+```
+
+The installer clones or updates this skill into `~/.codex/skills/codex-lark-bot`, then starts the interactive setup wizard. The wizard asks:
+
+- Which agent to connect: Claude Code, Codex CLI, or both.
+- How to connect the Feishu/Lark bot: existing app credentials or new app/bot creation.
+- For an existing app, it asks for App ID and App Secret; App Secret is hidden and passed to `lark-cli` through stdin.
+- For a new app, it calls the official `lark-cli config init --new` flow and tells the user to scan or confirm the QR/browser prompt when Feishu/Lark shows one.
+
 ## Core Workflow
 
 1. Check local tools and install `lark-cli` if missing.
@@ -82,6 +97,7 @@ Use this skill to connect local Codex CLI and/or Claude Code to Feishu/Lark with
 Use `scripts/codex_lark_bootstrap.ps1` for repeatable local setup and diagnostics:
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File C:\Users\KC\.codex\skills\codex-lark-bot\scripts\codex_lark_bootstrap.ps1 -Mode interactive
 powershell -ExecutionPolicy Bypass -File C:\Users\KC\.codex\skills\codex-lark-bot\scripts\codex_lark_bootstrap.ps1 -Mode check -Agent both
 powershell -ExecutionPolicy Bypass -File C:\Users\KC\.codex\skills\codex-lark-bot\scripts\codex_lark_bootstrap.ps1 -Mode install-cli -Agent both
 powershell -ExecutionPolicy Bypass -File C:\Users\KC\.codex\skills\codex-lark-bot\scripts\codex_lark_bootstrap.ps1 -Mode new-app -Agent both -InstallIfMissing
